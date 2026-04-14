@@ -1,0 +1,114 @@
+import firebase from 'firebase/compat/app';
+import 'firebase/compat/auth';
+import 'firebase/compat/firestore';
+
+// 1. Cấu hình Firebase từ config của bạn
+const firebaseConfig = {
+    apiKey: "AIzaSyAwF1IExjyp3-0nagkDyAoS1N0h80eQBfk",
+    authDomain: "phongthi.firebaseapp.com",
+    projectId: "phongthi",
+    storageBucket: "phongthi.firebasestorage.app",
+    messagingSenderId: "209633917511",
+    appId: "1:209633917511:web:83853a50e34160f0dc4f62",
+    measurementId: "G-JGMR1F25VE"
+};
+
+// Khởi tạo Firebase
+if (!firebase.apps.length) {
+    firebase.initializeApp(firebaseConfig);
+}
+
+export const auth = firebase.auth();
+export const db = firebase.firestore();
+
+// --- ĐỊNH NGHĨA INTERFACES ---
+interface UserData {
+    name: string;
+    email: string;
+    isVip: boolean;
+    results: any[];
+}
+
+interface Submission {
+    studentId: string;
+    examId: string;
+    score: number;
+    timestamp: firebase.firestore.FieldValue;
+}
+
+// --- CÁC HÀM DỊCH VỤ ---
+
+/**
+ * Lấy danh sách đề thi thời gian thực
+ */
+export const subscribeExams = (callback: (exams: any[]) => void) => {
+    return db.collection("exams").onSnapshot((snapshot) => {
+        const exams = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+        callback(exams);
+    });
+};
+
+/**
+ * Xử lý nộp bài và cập nhật số lượng trong phòng thi
+ * (Khớp với logic Security Rules: submittedCount + 1)
+ */
+export const submitExamResult = async (
+    userId: string, 
+    examId: string, 
+    roomId: string, 
+    score: number
+) => {
+    const batch = db.batch();
+
+    // 1. Tạo bản ghi bài nộp mới
+    const submissionRef = db.collection("submissions").doc();
+    const submissionData: Submission = {
+        studentId: userId,
+        examId: examId,
+        score: score,
+        timestamp: firebase.firestore.FieldValue.serverTimestamp()
+    };
+    batch.set(submissionRef, submissionData);
+
+    // 2. Cập nhật phòng thi (Logic tăng count)
+    const roomRef = db.collection("rooms").doc(roomId);
+    batch.update(roomRef, {
+        submittedCount: firebase.firestore.FieldValue.increment(1),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    try {
+        await batch.commit();
+        console.log("Nộp bài thành công!");
+    } catch (error) {
+        console.error("Lỗi khi nộp bài:", error);
+        throw error;
+    }
+};
+
+/**
+ * Quản lý Subcollection Images (Lưu TikZ base64)
+ */
+export const getExamImages = async (examId: string) => {
+    const imagesSnapshot = await db.collection("exams")
+        .doc(examId)
+        .collection("images")
+        .get();
+        
+    return imagesSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+    }));
+};
+
+/**
+ * Cập nhật Profile người dùng
+ */
+export const updateProfile = async (userId: string, newName: string) => {
+    return db.collection("users").doc(userId).update({
+        name: newName
+    });
+};
