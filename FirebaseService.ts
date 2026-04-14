@@ -2,7 +2,7 @@ import firebase from 'firebase/compat/app';
 import 'firebase/compat/auth';
 import 'firebase/compat/firestore';
 
-// 1. Cấu hình Firebase từ config của bạn
+// 1. Cấu hình Firebase từ thông tin bạn cung cấp
 const firebaseConfig = {
     apiKey: "AIzaSyAwF1IExjyp3-0nagkDyAoS1N0h80eQBfk",
     authDomain: "phongthi.firebaseapp.com",
@@ -13,7 +13,7 @@ const firebaseConfig = {
     measurementId: "G-JGMR1F25VE"
 };
 
-// Khởi tạo Firebase
+// Khởi tạo
 if (!firebase.apps.length) {
     firebase.initializeApp(firebaseConfig);
 }
@@ -21,25 +21,11 @@ if (!firebase.apps.length) {
 export const auth = firebase.auth();
 export const db = firebase.firestore();
 
-// --- ĐỊNH NGHĨA INTERFACES ---
-interface UserData {
-    name: string;
-    email: string;
-    isVip: boolean;
-    results: any[];
-}
-
-interface Submission {
-    studentId: string;
-    examId: string;
-    score: number;
-    timestamp: firebase.firestore.FieldValue;
-}
-
-// --- CÁC HÀM DỊCH VỤ ---
+// --- CÁC HÀM THAY THẾ LOGIC LƯU TRỮ CŨ ---
 
 /**
- * Lấy danh sách đề thi thời gian thực
+ * THAY THẾ: Hàm load() cũ
+ * Lấy danh sách đề thi thời gian thực từ Cloud thay vì LocalStorage
  */
 export const subscribeExams = (callback: (exams: any[]) => void) => {
     return db.collection("exams").onSnapshot((snapshot) => {
@@ -52,10 +38,41 @@ export const subscribeExams = (callback: (exams: any[]) => void) => {
 };
 
 /**
- * Xử lý nộp bài và cập nhật số lượng trong phòng thi
- * (Khớp với logic Security Rules: submittedCount + 1)
+ * THAY THẾ: Hàm updateProfile() cũ
+ * Lưu thẳng lên Firestore
  */
-export const submitExamResult = async (
+export const updateCloudProfile = async (userId: string, newName: string) => {
+    try {
+        await db.collection("users").doc(userId).update({
+            name: newName
+        });
+        console.log("Cập nhật profile thành công");
+    } catch (error) {
+        console.error("Lỗi cập nhật profile:", error);
+    }
+};
+
+/**
+ * THAY THẾ: Logic "Up đề"
+ * Đẩy đề thi mới lên Cloud để các máy khác có thể thấy
+ */
+export const uploadExam = async (examData: any) => {
+    try {
+        const docRef = await db.collection("exams").add({
+            ...examData,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        return docRef.id;
+    } catch (error) {
+        console.error("Lỗi khi up đề:", error);
+    }
+};
+
+/**
+ * THAY THẾ: Logic lưu kết quả nộp bài
+ * Đồng bộ đồng thời: Lưu bài nộp và tăng số lượng bài trong Room (+1)
+ */
+export const submitExamToCloud = async (
     userId: string, 
     examId: string, 
     roomId: string, 
@@ -63,17 +80,17 @@ export const submitExamResult = async (
 ) => {
     const batch = db.batch();
 
-    // 1. Tạo bản ghi bài nộp mới
-    const submissionRef = db.collection("submissions").doc();
-    const submissionData: Submission = {
+    // 1. Tạo bản ghi bài nộp (Submissions)
+    const subRef = db.collection("submissions").doc();
+    batch.set(subRef, {
         studentId: userId,
         examId: examId,
         score: score,
-        timestamp: firebase.firestore.FieldValue.serverTimestamp()
-    };
-    batch.set(submissionRef, submissionData);
+        status: "completed",
+        submittedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
 
-    // 2. Cập nhật phòng thi (Logic tăng count)
+    // 2. Cập nhật phòng thi (Rooms) - Khớp với Security Rules của bạn
     const roomRef = db.collection("rooms").doc(roomId);
     batch.update(roomRef, {
         submittedCount: firebase.firestore.FieldValue.increment(1),
@@ -82,33 +99,9 @@ export const submitExamResult = async (
 
     try {
         await batch.commit();
-        console.log("Nộp bài thành công!");
+        alert("Nộp bài thành công và đã lưu lên hệ thống!");
     } catch (error) {
-        console.error("Lỗi khi nộp bài:", error);
-        throw error;
+        console.error("Lỗi nộp bài:", error);
+        alert("Có lỗi xảy ra khi nộp bài!");
     }
-};
-
-/**
- * Quản lý Subcollection Images (Lưu TikZ base64)
- */
-export const getExamImages = async (examId: string) => {
-    const imagesSnapshot = await db.collection("exams")
-        .doc(examId)
-        .collection("images")
-        .get();
-        
-    return imagesSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-    }));
-};
-
-/**
- * Cập nhật Profile người dùng
- */
-export const updateProfile = async (userId: string, newName: string) => {
-    return db.collection("users").doc(userId).update({
-        name: newName
-    });
 };
